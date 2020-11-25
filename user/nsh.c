@@ -19,7 +19,7 @@ int getcmd(char *buf, int nbuf)
 char whitespace[] = " \t\r\n\v";
 char args[MAXARGS][MAXWORD]; //每一行存储一个输入参数
 
-//解析划分cmd中的输入
+//解析划分cmd中的输入,将整个句子划分为一个个参数
 void setargs(char *cmd, char* argv[],int* argc)
 {
     for(int i=0; i<MAXARGS; i++)
