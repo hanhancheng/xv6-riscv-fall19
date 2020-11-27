@@ -9,6 +9,7 @@
 #include "riscv.h"
 #include "defs.h"
 
+
 void freerange(void *pa_start, void *pa_end);
 
 extern char end[]; // first address after kernel.
@@ -18,15 +19,18 @@ struct run {
   struct run *next;
 };
 
-struct {
+struct kmem{
   struct spinlock lock;
   struct run *freelist;
-} kmem;
+};
+
+struct kmem kmems[NCPU];
 
 void
 kinit()
 {
-  initlock(&kmem.lock, "kmem");
+  for(int i=0;i<NCPU;i++)
+    initlock(&kmems[i].lock, "kmem");
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -55,11 +59,33 @@ kfree(void *pa)
   memset(pa, 1, PGSIZE);
 
   r = (struct run*)pa;
+  push_off();
+  int cid = cpuid();
+  pop_off();
+  acquire(&kmems[cid].lock);
+  r->next = kmems[cid].freelist;
+  kmems[cid].freelist = r;
+  release(&kmems[cid].lock);
+}
 
-  acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
-  release(&kmem.lock);
+void *
+steal(int skip){
+  struct run * rs=0;
+  for(int i=0;i<NCPU;i++){
+    // 当遇到本次CPU直接跳过，查询下一个CPU的freelist
+    if(i == skip){
+      continue;
+    }
+    acquire(&kmems[i].lock);
+    if(kmems[i].freelist!=0){
+      rs=kmems[i].freelist;
+      kmems[i].freelist=rs->next;
+      release(&kmems[i].lock);
+      return (void *)rs;
+    }
+    release(&kmems[i].lock);
+  }
+  return (void *)rs;
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -69,14 +95,21 @@ void *
 kalloc(void)
 {
   struct run *r;
-
-  acquire(&kmem.lock);
-  r = kmem.freelist;
+  push_off();
+  int cid = cpuid();
+  pop_off();
+  acquire(&kmems[cid].lock);
+  r = kmems[cid].freelist;
   if(r)
-    kmem.freelist = r->next;
-  release(&kmem.lock);
-
+    kmems[cid].freelist = r->next;
+  release(&kmems[cid].lock);
+  if(!r)
+  {
+    // 当前cpu的freelist为空,窃取其他cpu的freelist
+    r=steal(cid);
+  }
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
 }
+
