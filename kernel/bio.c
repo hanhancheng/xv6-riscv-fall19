@@ -75,25 +75,19 @@ bget(uint dev, uint blockno)
     }
   }
 
-  // 如果在h对应的bucket中没有找到，那么需要到其他bucket中找，这种情况不会少见，因为
-  // binit中，我们就把所有的buffer都插入到了第一个bucket中（当时blockno都是0
-  // 此时原来bucket的锁还没有释放，因为我们在其他bucket中找到buffer后，还要将其插入到原bucket中
-  int nh=(h+1)%NBUCKETS; // nh表示下一个要探索的bucket，当它重新变成h，说明所有的buffer都bussy（refcnt不为0），此时
-              // 如之前设计的，panic
+  // 查找其他的bucket
+  int nh=(h+1)%NBUCKETS; 
   while(nh!=h){
-    acquire(&bcache.lock[nh]);// 获取当前bocket的锁
+    acquire(&bcache.lock[nh]);
     for(b = bcache.hashbucket[nh].prev; b != &bcache.hashbucket[nh]; b = b->prev){
       if(b->refcnt == 0) {
         b->dev = dev;
         b->blockno = blockno;
         b->valid = 0;
         b->refcnt = 1;
-        // 从原来bucket的链表中断开
         b->next->prev=b->prev;
         b->prev->next=b->next;
         release(&bcache.lock[nh]);
-        // 插入到blockno对应的bucket中去
-        // 👇就是有头节点的头插法
         b->next=bcache.hashbucket[h].next;
         b->prev=&bcache.hashbucket[h];
         bcache.hashbucket[h].next->prev=b;
@@ -103,7 +97,6 @@ bget(uint dev, uint blockno)
         return b;
       }
     }
-    // 如果当前bucket里没有找到，在转到下一个bucket之前，记得释放当前bucket的锁
     release(&bcache.lock[nh]);
     nh=(nh+1)%NBUCKETS;
   }
